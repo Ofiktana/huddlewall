@@ -12,7 +12,6 @@ export default function NotesGrid({ bucket, canEdit }) {
           key={post.id}
           post={post}
           index={index}
-          bucketId={bucket.id}
           canEdit={canEdit(post)}
         />
       ))}

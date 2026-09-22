@@ -1,15 +1,15 @@
 import { useState } from 'react';
 import { useHuddle } from '../context/HuddleContext';
 
-export default function NoteCard({ post, index, bucketId, canEdit }) {
+export default function NoteCard({ post, index, canEdit }) {
   const { toast, updatePost, deletePost } = useHuddle();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(post.text);
   const tilt = ((index * 37) % 7) - 3;
   const edited = post.updatedAt !== post.createdAt;
 
-  function save() {
-    const result = updatePost(bucketId, post.id, draft);
+  async function save() {
+    const result = await updatePost(post.id, draft);
     if (!result.ok) {
       toast(result.error);
       return;
@@ -18,10 +18,10 @@ export default function NoteCard({ post, index, bucketId, canEdit }) {
     toast('Idea updated');
   }
 
-  function remove() {
+  async function remove() {
     if (!window.confirm('Remove this idea from the wall?')) return;
-    deletePost(bucketId, post.id);
-    toast('Idea deleted');
+    const result = await deletePost(post.id);
+    toast(result.ok ? 'Idea deleted' : result.error);
   }
 
   return (

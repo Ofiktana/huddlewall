@@ -10,7 +10,7 @@ export default function HostBoard() {
   const { bucketId } = useParams();
   const navigate = useNavigate();
   const now = useNow();
-  const { buckets, setSession } = useHuddle();
+  const { buckets, loading, setSession } = useHuddle();
   const bucket = buckets.find((item) => item.id === bucketId);
   const [openedAt] = useState(() => new Date().toISOString());
 
@@ -19,6 +19,7 @@ export default function HostBoard() {
     setSession({ role: 'host', view: 'board', bucketId: bucket.id });
   }, [bucket, setSession]);
 
+  if (loading) return <section className="screen center"><div className="empty-note">Loading wall…</div></section>;
   if (!bucket) return <Navigate to="/host" replace />;
 
   return (

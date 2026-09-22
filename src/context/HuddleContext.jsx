@@ -1,26 +1,46 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { seedState } from '../data/dummyData';
-import { IDENTITY_KEY, SESSION_KEY, STATE_KEY, genCode, nowISO, uid } from '../utils';
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  updateDoc,
+  where,
+  writeBatch,
+} from 'firebase/firestore';
+import { db } from '../firebase';
+import { IDENTITY_KEY, SESSION_KEY, genCode, nowISO, uid } from '../utils';
 
 const HuddleContext = createContext(null);
 
-function readBuckets() {
+const bucketsCol = collection(db, 'buckets');
+const postsCol = collection(db, 'posts');
+const BATCH_LIMIT = 500;
+
+function toISO(timestamp) {
+  return timestamp ? timestamp.toDate().toISOString() : nowISO();
+}
+
+function readSnapshot(snapshot, timestampFields) {
+  return snapshot.docs.map((snap) => {
+    const data = snap.data({ serverTimestamps: 'estimate' });
+    for (const field of timestampFields) data[field] = toISO(data[field]);
+    return { id: snap.id, ...data };
+  });
+}
+
+async function attempt(action, errorMessage) {
   try {
-    const raw = localStorage.getItem(STATE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed.buckets)) return parsed.buckets;
-    }
-  } catch {
-    /* fall through to seed data */
+    await action();
+    return { ok: true };
+  } catch (error) {
+    console.error(errorMessage, error);
+    return { ok: false, error: errorMessage };
   }
-  const seeded = seedState();
-  try {
-    localStorage.setItem(STATE_KEY, JSON.stringify(seeded));
-  } catch {
-    /* storage unavailable — keep the seed in memory */
-  }
-  return seeded.buckets;
 }
 
 function readSession() {
@@ -31,48 +51,55 @@ function readSession() {
   }
 }
 
-function writeBuckets(buckets) {
-  try {
-    localStorage.setItem(STATE_KEY, JSON.stringify({ buckets }));
-  } catch {
-    /* ignore quota / private mode */
-  }
-}
-
 export function HuddleProvider({ children }) {
-  const [buckets, setBuckets] = useState(readBuckets);
+  const [bucketDocs, setBucketDocs] = useState(null);
+  const [postDocs, setPostDocs] = useState(null);
+  const [loadError, setLoadError] = useState('');
   const [session, setSessionState] = useState(readSession);
   const [toastMessage, setToastMessage] = useState('');
   const [toastVisible, setToastVisible] = useState(false);
-  const bucketsRef = useRef(buckets);
   const toastTimer = useRef(null);
 
-  bucketsRef.current = buckets;
-
   useEffect(() => {
-    function onStorage(event) {
-      if (event.key !== STATE_KEY || !event.newValue) return;
-      try {
-        const parsed = JSON.parse(event.newValue);
-        if (Array.isArray(parsed.buckets)) {
-          bucketsRef.current = parsed.buckets;
-          setBuckets(parsed.buckets);
-        }
-      } catch {
-        /* ignore malformed updates from another tab */
-      }
+    function onError(error) {
+      console.error('Firestore listener failed', error);
+      setLoadError("Couldn't connect to the database. Check your connection and refresh.");
+      setBucketDocs((prev) => prev || []);
+      setPostDocs((prev) => prev || []);
     }
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
+    const unsubscribeBuckets = onSnapshot(
+      bucketsCol,
+      (snapshot) => setBucketDocs(readSnapshot(snapshot, ['createdAt'])),
+      onError,
+    );
+    const unsubscribePosts = onSnapshot(
+      postsCol,
+      (snapshot) => setPostDocs(readSnapshot(snapshot, ['createdAt', 'updatedAt'])),
+      onError,
+    );
+    return () => {
+      unsubscribeBuckets();
+      unsubscribePosts();
+    };
   }, []);
 
-  const updateBuckets = useCallback((updater) => {
-    const next = updater(bucketsRef.current);
-    bucketsRef.current = next;
-    writeBuckets(next);
-    setBuckets(next);
-    return next;
-  }, []);
+  const loading = bucketDocs === null || postDocs === null;
+
+  const buckets = useMemo(() => {
+    if (loading) return [];
+    const postsByBucket = new Map();
+    for (const { bucketId, ...post } of postDocs) {
+      if (!postsByBucket.has(bucketId)) postsByBucket.set(bucketId, []);
+      postsByBucket.get(bucketId).push(post);
+    }
+    const newestFirst = (a, b) => b.createdAt.localeCompare(a.createdAt);
+    return bucketDocs
+      .map((bucket) => ({ ...bucket, posts: (postsByBucket.get(bucket.id) || []).sort(newestFirst) }))
+      .sort(newestFirst);
+  }, [bucketDocs, loading, postDocs]);
+
+  const bucketsRef = useRef(buckets);
+  bucketsRef.current = buckets;
 
   const setSession = useCallback((next) => {
     setSessionState(next);
@@ -113,7 +140,7 @@ export function HuddleProvider({ children }) {
     return map[key];
   }, []);
 
-  const createBucket = useCallback((name, code) => {
+  const createBucket = useCallback(async (name, code) => {
     const trimmed = name.trim();
     if (!trimmed) return { ok: false, error: 'Give the bucket a name first' };
     const taken = new Set(bucketsRef.current.map((bucket) => bucket.code));
@@ -124,80 +151,70 @@ export function HuddleProvider({ children }) {
     if (!finalCode) {
       do { finalCode = genCode(); } while (taken.has(finalCode));
     }
-    updateBuckets((prev) => [
-      { id: uid('b'), name: trimmed, code: finalCode, createdAt: nowISO(), posts: [] },
-      ...prev,
-    ]);
-    return { ok: true };
-  }, [updateBuckets]);
+    return attempt(
+      () => addDoc(bucketsCol, { name: trimmed, code: finalCode, createdAt: serverTimestamp() }),
+      "Couldn't create the bucket",
+    );
+  }, []);
 
-  const renameBucket = useCallback((bucketId, name) => {
+  const renameBucket = useCallback(async (bucketId, name) => {
     const trimmed = name.trim();
     if (!trimmed) return { ok: false, error: "Name can't be empty" };
-    updateBuckets((prev) => prev.map((bucket) => (
-      bucket.id === bucketId ? { ...bucket, name: trimmed } : bucket
-    )));
-    return { ok: true };
-  }, [updateBuckets]);
+    return attempt(
+      () => updateDoc(doc(bucketsCol, bucketId), { name: trimmed }),
+      "Couldn't rename the bucket",
+    );
+  }, []);
 
-  const regenerateCode = useCallback((bucketId) => {
-    let code = '';
-    updateBuckets((prev) => {
-      const taken = new Set(prev.map((bucket) => bucket.code));
-      const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-      do {
-        code = '';
-        for (let i = 0; i < 6; i += 1) code += alphabet[Math.floor(Math.random() * alphabet.length)];
-      } while (taken.has(code));
-      return prev.map((bucket) => (bucket.id === bucketId ? { ...bucket, code } : bucket));
-    });
-    return code;
-  }, [updateBuckets]);
+  const regenerateCode = useCallback(async (bucketId) => {
+    const taken = new Set(bucketsRef.current.map((bucket) => bucket.code));
+    let code;
+    do { code = genCode(); } while (taken.has(code));
+    const result = await attempt(
+      () => updateDoc(doc(bucketsCol, bucketId), { code }),
+      "Couldn't generate a new code",
+    );
+    return { ...result, code };
+  }, []);
 
-  const deleteBucket = useCallback((bucketId) => {
-    updateBuckets((prev) => prev.filter((bucket) => bucket.id !== bucketId));
-  }, [updateBuckets]);
+  const deleteBucket = useCallback(async (bucketId) => attempt(async () => {
+    const posts = await getDocs(query(postsCol, where('bucketId', '==', bucketId)));
+    const refs = posts.docs.map((snap) => snap.ref).concat(doc(bucketsCol, bucketId));
+    for (let i = 0; i < refs.length; i += BATCH_LIMIT) {
+      const batch = writeBatch(db);
+      refs.slice(i, i + BATCH_LIMIT).forEach((ref) => batch.delete(ref));
+      await batch.commit();
+    }
+  }, "Couldn't delete the bucket"), []);
 
-  const resetDemo = useCallback(() => {
-    updateBuckets(() => seedState().buckets);
-  }, [updateBuckets]);
+  const addPost = useCallback(async (bucketId, post) => attempt(
+    () => addDoc(postsCol, {
+      ...post,
+      bucketId,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }),
+    "Couldn't post your idea",
+  ), []);
 
-  const addPost = useCallback((bucketId, post) => {
-    const stamp = nowISO();
-    updateBuckets((prev) => prev.map((bucket) => {
-      if (bucket.id !== bucketId) return bucket;
-      return {
-        ...bucket,
-        posts: [{ id: uid('p'), createdAt: stamp, updatedAt: stamp, ...post }, ...bucket.posts],
-      };
-    }));
-  }, [updateBuckets]);
-
-  const updatePost = useCallback((bucketId, postId, text) => {
+  const updatePost = useCallback(async (postId, text) => {
     const trimmed = text.trim();
     if (!trimmed) return { ok: false, error: "Idea can't be empty" };
-    const stamp = nowISO();
-    updateBuckets((prev) => prev.map((bucket) => {
-      if (bucket.id !== bucketId) return bucket;
-      return {
-        ...bucket,
-        posts: bucket.posts.map((post) => (
-          post.id === postId ? { ...post, text: trimmed, updatedAt: stamp } : post
-        )),
-      };
-    }));
-    return { ok: true };
-  }, [updateBuckets]);
+    return attempt(
+      () => updateDoc(doc(postsCol, postId), { text: trimmed, updatedAt: serverTimestamp() }),
+      "Couldn't update the idea",
+    );
+  }, []);
 
-  const deletePost = useCallback((bucketId, postId) => {
-    updateBuckets((prev) => prev.map((bucket) => {
-      if (bucket.id !== bucketId) return bucket;
-      return { ...bucket, posts: bucket.posts.filter((post) => post.id !== postId) };
-    }));
-  }, [updateBuckets]);
+  const deletePost = useCallback(async (postId) => attempt(
+    () => deleteDoc(doc(postsCol, postId)),
+    "Couldn't delete the idea",
+  ), []);
 
   const value = useMemo(() => ({
     buckets,
+    loading,
+    loadError,
     session,
     toastMessage,
     toastVisible,
@@ -209,12 +226,13 @@ export function HuddleProvider({ children }) {
     renameBucket,
     regenerateCode,
     deleteBucket,
-    resetDemo,
     addPost,
     updatePost,
     deletePost,
   }), [
     buckets,
+    loading,
+    loadError,
     session,
     toastMessage,
     toastVisible,
@@ -226,7 +244,6 @@ export function HuddleProvider({ children }) {
     renameBucket,
     regenerateCode,
     deleteBucket,
-    resetDemo,
     addPost,
     updatePost,
     deletePost,

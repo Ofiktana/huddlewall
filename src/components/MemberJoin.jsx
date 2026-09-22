@@ -4,7 +4,7 @@ import { useHuddle } from '../context/HuddleContext';
 
 export default function MemberJoin() {
   const navigate = useNavigate();
-  const { buckets, session, setSession, identityFor } = useHuddle();
+  const { buckets, loading, session, setSession, identityFor } = useHuddle();
   const [name, setName] = useState(session.memberName || '');
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
@@ -15,6 +15,10 @@ export default function MemberJoin() {
     const trimmedCode = code.trim().toUpperCase();
     if (!trimmedName || !trimmedCode) {
       setError('Add your name and the bucket code.');
+      return;
+    }
+    if (loading) {
+      setError('Still connecting to the wall. Try again in a moment.');
       return;
     }
     const bucket = buckets.find((item) => item.code === trimmedCode);

@@ -112,8 +112,8 @@ export default function HostTable() {
     setDraft(row.text);
   }
 
-  function saveEdit(row) {
-    const result = updatePost(row.bucketId, row.postId, draft);
+  async function saveEdit(row) {
+    const result = await updatePost(row.postId, draft);
     if (!result.ok) {
       toast(result.error);
       return;
@@ -122,9 +122,13 @@ export default function HostTable() {
     toast('Idea updated');
   }
 
-  function removeRow(row) {
+  async function removeRow(row) {
     if (!window.confirm('Remove this idea from the wall?')) return;
-    deletePost(row.bucketId, row.postId);
+    const result = await deletePost(row.postId);
+    if (!result.ok) {
+      toast(result.error);
+      return;
+    }
     if (editingId === row.postId) setEditingId(null);
     toast('Idea deleted');
   }

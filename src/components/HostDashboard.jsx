@@ -11,6 +11,8 @@ export default function HostDashboard() {
   const now = useNow();
   const {
     buckets,
+    loading,
+    loadError,
     setSession,
     clearSession,
     toast,
@@ -18,7 +20,6 @@ export default function HostDashboard() {
     renameBucket,
     regenerateCode,
     deleteBucket,
-    resetDemo,
   } = useHuddle();
 
   const [creating, setCreating] = useState(false);
@@ -40,9 +41,9 @@ export default function HostDashboard() {
     setCreating(true);
   }
 
-  function submitCreate(event) {
+  async function submitCreate(event) {
     event.preventDefault();
-    const result = createBucket(newName, newCode);
+    const result = await createBucket(newName, newCode);
     if (!result.ok) {
       toast(result.error);
       return;
@@ -56,9 +57,9 @@ export default function HostDashboard() {
     setRenameName(bucket.name);
   }
 
-  function submitRename(event) {
+  async function submitRename(event) {
     event.preventDefault();
-    const result = renameBucket(renameId, renameName);
+    const result = await renameBucket(renameId, renameName);
     if (!result.ok) {
       toast(result.error);
       return;
@@ -67,22 +68,16 @@ export default function HostDashboard() {
     toast('Bucket renamed');
   }
 
-  function handleNewCode(bucket) {
+  async function handleNewCode(bucket) {
     if (!window.confirm('Generate a new code for "' + bucket.name + '"? The old code will stop working.')) return;
-    const code = regenerateCode(bucket.id);
-    toast('New code: ' + code);
+    const result = await regenerateCode(bucket.id);
+    toast(result.ok ? 'New code: ' + result.code : result.error);
   }
 
-  function handleDelete(bucket) {
+  async function handleDelete(bucket) {
     if (!window.confirm('Delete "' + bucket.name + '" and all its ideas? This cannot be undone.')) return;
-    deleteBucket(bucket.id);
-    toast('Bucket deleted');
-  }
-
-  function handleReset() {
-    if (!window.confirm('Reset all buckets and posts back to the demo defaults?')) return;
-    resetDemo();
-    toast('Demo data reset');
+    const result = await deleteBucket(bucket.id);
+    toast(result.ok ? 'Bucket deleted' : result.error);
   }
 
   async function handleCopy(code) {
@@ -114,7 +109,10 @@ export default function HostDashboard() {
             <div className="sub">Each bucket has its own join code. Share the code for the topic you want the team posting to.</div>
           </div>
         </div>
-        {buckets.length === 0 ? (
+        {loadError ? <div className="empty-note">{loadError}</div> : null}
+        {loading ? (
+          <div className="empty-note">Loading buckets…</div>
+        ) : buckets.length === 0 ? (
           <div className="empty-note">No buckets yet. Create one to start collecting ideas.</div>
         ) : (
           <div className="bucket-grid">
@@ -149,9 +147,6 @@ export default function HostDashboard() {
             ))}
           </div>
         )}
-        <footer className="foot-link">
-          <button type="button" onClick={handleReset}>Reset demo data</button>
-        </footer>
       </div>
 
       {creating ? (

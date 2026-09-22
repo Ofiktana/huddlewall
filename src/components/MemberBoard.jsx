@@ -10,29 +10,34 @@ export default function MemberBoard() {
   const { bucketId } = useParams();
   const navigate = useNavigate();
   const now = useNow();
-  const { buckets, session, setSession, toast, addPost } = useHuddle();
+  const { buckets, loading, session, setSession, toast, addPost } = useHuddle();
   const bucket = buckets.find((item) => item.id === bucketId);
   const [text, setText] = useState('');
   const [color, setColor] = useState(NOTE_COLORS[0]);
   const [openedAt] = useState(() => new Date().toISOString());
 
+  if (loading) return <section className="screen center"><div className="empty-note">Loading wall…</div></section>;
   if (!bucket) return <Navigate to="/join" replace />;
   if (session.role !== 'member' || session.bucketId !== bucket.id || !session.memberName || !session.token) {
     return <Navigate to="/join" replace />;
   }
 
-  function handlePost() {
+  async function handlePost() {
     const trimmed = text.trim();
     if (!trimmed) {
       toast('Write an idea before posting');
       return;
     }
-    addPost(bucket.id, {
+    const result = await addPost(bucket.id, {
       author: session.memberName,
       token: session.token,
       text: trimmed,
       color,
     });
+    if (!result.ok) {
+      toast(result.error);
+      return;
+    }
     setText('');
     toast('Idea posted to the wall');
   }

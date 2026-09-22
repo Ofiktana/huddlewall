@@ -1,6 +1,5 @@
 export const NOTE_COLORS = ['#FFD93D', '#FF6F91', '#2EC4B6', '#4CC9F0', '#A78BFA', '#FF9F1C'];
 
-export const STATE_KEY = 'huddleWallState_v1';
 export const IDENTITY_KEY = 'huddleWallIdentities_v1';
 export const SESSION_KEY = 'huddleWallSession_v1';
 
