@@ -260,7 +260,7 @@ export default function HostTable() {
                   <td className="idea-cell">
                     {editingId === row.postId ? (
                       <textarea
-                        maxLength={220}
+                        maxLength={1000}
                         value={draft}
                         onChange={(event) => setDraft(event.target.value)}
                         autoFocus

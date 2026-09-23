@@ -62,7 +62,7 @@ export default function MemberBoard() {
           <textarea
             id="composerText"
             placeholder="Type your idea..."
-            maxLength={220}
+            maxLength={1000}
             value={text}
             onChange={(event) => setText(event.target.value)}
           />

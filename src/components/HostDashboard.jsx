@@ -140,7 +140,7 @@ export default function HostDashboard() {
                 </div>
                 <div className="row">
                   <button type="button" className="btn ghost small" onClick={() => openRename(bucket)}>Rename</button>
-                  <button type="button" className="btn ghost small" onClick={() => handleNewCode(bucket)}>New code</button>
+                  {/* <button type="button" className="btn ghost small" onClick={() => handleNewCode(bucket)}>New code</button> */}
                   <button type="button" className="btn danger small" onClick={() => handleDelete(bucket)}>Delete</button>
                 </div>
               </article>

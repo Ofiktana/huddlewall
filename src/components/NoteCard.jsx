@@ -34,7 +34,7 @@ export default function NoteCard({ post, index, canEdit }) {
         <>
           <textarea
             className="edit-area"
-            maxLength={220}
+            maxLength={1000}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             autoFocus
